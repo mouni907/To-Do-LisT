@@ -44,3 +44,5 @@ python-dotenv
 flask-cors
 Flask-SQLAlchemy  
 supabase   
+google-generativeai
+

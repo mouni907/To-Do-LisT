@@ -1,88 +1,90 @@
-from flask import Flask, jsonify, request
+import os
+from flask import Flask, request, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
+import google.generativeai as genai
 from supabase import create_client, Client
-from google import genai
-from PIL import Image 
 
+# 1. Load environment variables from .env file
+load_dotenv()
+
+# 2. Get keys securely
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Check if keys are loaded
+if not GOOGLE_API_KEY:
+    print("❌ Error: GOOGLE_API_KEY not found in .env file")
+if not SUPABASE_URL:
+    print("❌ Error: SUPABASE_URL not found in .env file")
+
+# 3. Configure Google Gemini AI
+try:
+    genai.configure(api_key=GOOGLE_API_KEY)
+    model = genai.GenerativeModel('gemini-pro')
+except Exception as e:
+    print(f"Error configuring Gemini: {e}")
+
+# 4. Configure Supabase Database
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    print(f"Error connecting to Supabase: {e}")
+
+# 5. Initialize Flask App
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Allows your Frontend to talk to this Backend
 
-# =====================================================
-# 1. SETUP KEYS (PASTE YOUR REAL KEYS INSIDE THE QUOTES)
-# =====================================================
+# --- ROUTES ---
 
-# SUPABASE KEYS
-supabase_url = "https://ldkjaykrpojinkyrnbzo.supabase.co"
-supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxka2pheWtycG9qaW5reXJuYnpvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5OTM5OTAsImV4cCI6MjA4MDU2OTk5MH0.ssfBi8iLDstNWMLgg8g4NGw7w3N14jdfzrsTW_f0FNg" 
+@app.route('/')
+def home():
+    """Simple check to see if server is running"""
+    return jsonify({"message": "Backend is running successfully!"})
 
-# GEMINI KEY (Directly here as you requested)
-gemini_key = "AIzaSyCsek0lsULBJc0a6cOpccBDseIBA1O-DsI"
-
-# =====================================================
-# 2. INITIALIZE CLIENTS
-# =====================================================
-
-# Connect to Supabase
-supabase: Client = create_client(supabase_url, supabase_key)
-
-# Connect to Gemini
-# We use the key directly here, so no .env file is needed
-client = genai.Client(api_key=gemini_key)
-
-
-# =====================================================
-# 3. ROUTES
-# =====================================================
-
-# --- SUPABASE ROUTES (To-Do List) ---
-
-@app.route('/tasks', methods=['GET'])
-def get_tasks():
-    # Fetch all tasks
-    response = supabase.table('todos').select("*").order('due_date', desc=False).execute()
-    return jsonify(response.data)
-
-@app.route('/tasks', methods=['POST'])
-def add_task():
-    data = request.json
-    response = supabase.table('todos').insert({
-        "task": data['task'], 
-        "due_date": data.get('due_date')
-    }).execute()
-    return jsonify(response.data)
-
-@app.route('/tasks/<int:id>', methods=['DELETE'])
-def delete_task(id):
-    supabase.table('todos').delete().eq('id', id).execute()
-    return jsonify({"message": "Task deleted"})
-
-@app.route('/tasks/<int:id>', methods=['PUT'])
-def update_task(id):
-    data = request.json
-    supabase.table('todos').update({"task": data['task']}).eq('id', id).execute()
-    return jsonify({"message": "Task updated"})
-
-# --- GEMINI ROUTE (AI) ---
-
-@app.route('/ask-ai', methods=['POST'])
-def ask_ai():
+@app.route('/api/chat', methods=['POST'])
+def chat_with_ai():
+    """Route to talk to Gemini"""
     try:
         data = request.json
-        # Get the prompt from the user, or use a default one
-        user_prompt = data.get('prompt', 'Hello AI')
-        
+        user_message = data.get('message', '')
+
+        if not user_message:
+            return jsonify({"error": "No message provided"}), 400
+
         # Ask Gemini
-        response = client.models.generate_content(
-            model='gemini-2.0-flash', 
-            contents=user_prompt
-        )
+        response = model.generate_content(user_message)
         
-        # Return the text back to the frontend
         return jsonify({"reply": response.text})
-    
     except Exception as e:
-        print(f"Error: {e}")
         return jsonify({"error": str(e)}), 500
 
+# --- UPDATED ROUTES BELOW (Renamed to /tasks) ---
+
+@app.route('/tasks', methods=['GET'])  # <--- CHANGED FROM /api/todos
+def get_todos():
+    """Fetch tasks from Supabase"""
+    try:
+        # Make sure your table in Supabase is actually named 'todos'
+        response = supabase.table('todos').select("*").execute()
+        return jsonify(response.data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/tasks', methods=['POST']) # <--- CHANGED FROM /api/todos
+def add_todo():
+    """Add a new task to Supabase"""
+    try:
+        data = request.json
+        task_text = data.get('task')
+        
+        # Insert into Supabase table 'todos'
+        response = supabase.table('todos').insert({"task": task_text}).execute()
+        return jsonify(response.data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# 6. Run the App
 if __name__ == '__main__':
-    app.run(port=5000, debug=True)
+    app.run(debug=True, port=5000)
